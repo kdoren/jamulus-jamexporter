@@ -25,19 +25,21 @@ This comprises one primary script:
 
 ## Configuration
 The configuration file /etc/publish-recordings.conf may contain the following:
-* `S3_BUCKET=<s3-bucket-name>                                # S3 bucket name if writing to S3`
-* `PREFIX=jamulus                                            # object name prefix if writing to S3`
-* `RECORDING_HOST_DIR=user@hostname:/home/user/recordings/   # scp target if using scp instead of S3`
-* `SSH_KEY=/root/.ssh/user-private-key.pem                   # ssh key for target user if using scp (with chmod 600 permissions)`
-* `RECORDING_DIR=/var/recordings                             # recording dir used by Jamulus server`
-* `JAMULUS_STATUSPAGE=/tmp/jamulus-server-status.html        # html status page created by Jamulus server`
-* `NO_CLIENT_CONNECTED="No client connected"                 # idle message to check for in status page`
-* `ZIP_PASSWORD=secret_password                              # optional password for zip archive`
+```
+S3_BUCKET=<s3-bucket-name>                                # S3 bucket name if writing to S3
+PREFIX=jamulus                                            # object name prefix if writing to S3
+RECORDING_HOST_DIR=user@hostname:/home/user/recordings/   # scp target if using scp instead of S3
+SSH_KEY=/root/.ssh/user-private-key.pem                   # ssh key for target user if using scp (with chmod 600 permissions)
+RECORDING_DIR=/var/recordings                             # recording dir used by Jamulus server
+JAMULUS_STATUSPAGE=/tmp/jamulus-server-status.html        # html status page created by Jamulus server
+NO_CLIENT_CONNECTED="No client connected"                 # idle message to check for in status page
+ZIP_PASSWORD=secret_password                              # optional password for zip archive
+```
 
 I'm not sure if the status file entry `NO_CLIENT_CONNECT` gets translated - if so, the local value is needed here.
 
 ## Crontab entry required
-Example: call every 10 mins; if server is idle, publish any recordings that exist
+Example: call every 10 mins; if server is idle, publish any recordings that exist  
 `*/10 * * * * export HOME=/root; /bin/bash /usr/local/bin/publish-recordings.sh >> /var/log/publish-recordings.log 2>&1`
 
 
