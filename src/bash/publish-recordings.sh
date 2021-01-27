@@ -37,7 +37,7 @@
 #    "Security Credentials": "Create access key" and save the key
 #
 # 3) install required packages:
-#    apt-get install awscli jq ffmpeg inotify-tools zip
+#    apt-get install awscli jq ffmpeg zip
 #
 # 4) configure awscli with your key and region:
 #
@@ -70,6 +70,10 @@
 # S3_BUCKET=<name of S3 bucket>
 PREFIX=jamulus
 
+# if not using S3, scp may be used.  This requires a key file with proper permissions, and a destination host including username:
+# SSH_KEY=/root/.ssh/user-private-key.pem
+# RECORDING_HOST_DIR=user@hostname:/home/user/recordings/
+
 # Recording directory used by Jamulus server:
 # Example: command line argument to Jamulus server:
 #   --recording /var/recordings/
@@ -82,6 +86,9 @@ RECORDING_DIR=/var/recordings
 #
 JAMULUS_STATUSPAGE=/tmp/jamulus-server-status.html
 NO_CLIENT_CONNECTED="No client connected"
+
+# optional zip archive password
+# ZIP_PASSWORD=secret_password
 
 if [ -f /etc/publish-recordings.conf ]; then
 	source /etc/publish-recordings.conf
@@ -211,18 +218,23 @@ do
 	else
 		ARCHIVE="${jamDir}.zip"
 		echo `date`: Zipping dir ${jamDir} to $ARCHIVE
-		nice -n 19 zip -rj "$ARCHIVE" "${jamDir}" -i '*.opus' '*.rpp' && {
+		if [ -n "$ZIP_PASSWORD" ]; then
+			ZIP_COMMAND="nice -n 19 zip -P${ZIP_PASSWORD} -rj $ARCHIVE ${jamDir} -i '*.opus' '*.rpp'"
+		else
+			ZIP_COMMAND="nice -n 19 zip -rj $ARCHIVE ${jamDir} -i '*.opus' '*.rpp'"
+		fi
+		eval $ZIP_COMMAND && {
 			rm -r "${jamDir}"
-		        echo `date`: Copying ${jamDir}.zip to s3
+		        echo `date`: Copying ${jamDir}.zip to target
 			i=10
-			if [ -n "S3_BUCKET" ]; then
+			if [ -n "$S3_BUCKET" ]; then
 				while [[ $i -gt 0 ]] && ! nice -n 19 aws s3 cp "$ARCHIVE" s3://$S3_BUCKET/$PREFIX/ --acl public-read
 				do
 					(( i-- ))
 					sleep $(( 11 - i ))
 				done
 			elif [ -n "$RECORDING_HOST_DIR" ]; then
-				while [[ $i -gt 0 ]] && ! scp -o ConnectionAttempts=6 "${jamDir}.zip" ${RECORDING_HOST_DIR}
+				while [[ $i -gt 0 ]] && ! scp -i ${SSH_KEY} -o ConnectionAttempts=6 "${jamDir}.zip" ${RECORDING_HOST_DIR}
 				do
 					(( i-- ))
 					sleep $(( 11 - i ))

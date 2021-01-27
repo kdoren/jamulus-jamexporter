@@ -1,42 +1,49 @@
 # Jamulus Jam Exporter
 
+## Features:
+
+- **Automated management of multi-track recording files from Jamulus server**
+    - can be very high in quality - audio only made one trip through internet
+    - separate tracks allow mixing later
+- **Creates an opus-compressed zip archive of a multi-track recording session**"
+    - Opus offers huge file size reduction while maintaining high quality
+    - Need to use Reaper to mix (very good low-cost $60 DAW with free trial)
+- **AWS S3 Bucket upload capability**
+    - low-cost serverless storage
+    - for automated file management, store in a publicly browsable bucket (see link below)
+    - Set a lifecycle policy for automatic deletion of recordings after x days
+- **publish-recordings.sh is the only script required for operation**
+    - it immediately returns without doing anything if server is in use
+    - requires a crontab entry to call it periodically
+    - no dependency on inotify-publisher.sh which is now deprecated.
+    - parameters should be set in config file /etc/publish-recordings.conf or command line.  Editing the script file publish-recordings.sh should not be requilred.
+
 _General note:_
 
-The scripts here are derived from what I use on my own server - they have been altered to be less dependent
-on the way I run my server and hence are not scripts I actually run.  Which means my changes are subject to bugs.
-
-This comprises two scripts:
-* A bash script to monitor the Jamulus recording base directory for new recordings
+This comprises one primary script:
 * A bash script to apply some judicious rules and compression before uploading the recordings offsite
 
-## Systemd Service
-Also supplied is a systemd service file to start the monitor script:
-* `src/systemd/inotify-publisher.service`
+## Configuration
+The configuration file /etc/publish-recordings.conf may contain the following:
+* `S3_BUCKET=<s3-bucket-name>                                # S3 bucket name if writing to S3`
+* `PREFIX=jamulus                                            # object name prefix if writing to S3`
+* `RECORDING_HOST_DIR=user@hostname:/home/user/recordings/   # scp target if using scp instead of S3`
+* `SSH_KEY=/root/.ssh/user-private-key.pem                   # ssh key for target user if using scp (with chmod 600 permissions)`
+* `RECORDING_DIR=/var/recordings                             # recording dir used by Jamulus server`
+* `JAMULUS_STATUSPAGE=/tmp/jamulus-server-status.html        # html status page created by Jamulus server`
+* `NO_CLIENT_CONNECTED="No client connected"                 # idle message to check for in status page`
+* `ZIP_PASSWORD=secret_password                              # optional password for zip archive`
 
-This contains the path to the monitor script in the `ExecStart=` line and the `User=` and `Group=` lines need to
-match how you usually run Jamulus.
-
-## inotify-publisher.sh monitoring script
-The configuration section at the top has the following:
-* `JAMULUS_ROOT=/opt/Jamulus`
-* `JAMULUS_RECORDING_DIR=${JAMULUS_ROOT}/run/recording`
-* `JAMULUS_STATUSPAGE=${JAMULUS_ROOT}/run/status.html`
-* `PUBLISH_SCRIPT=${JAMULUS_ROOT}/bin/publish-recordings.sh`
-* `NO_CLIENT_CONNECTED="No client connected"`
-
-You may need to edit more than just `JAMULUS_ROOT` - adjust to suit.
 I'm not sure if the status file entry `NO_CLIENT_CONNECT` gets translated - if so, the local value is needed here.
 
-The script uses one program that you might not have installed by default, `inotifywait`.
-* http://inotify-tools.sourceforge.net/
-
-I would expect your distribution makes this available.
+## Crontab entry required
+Example: call every 10 mins; if server is idle, publish any recordings that exist
+`*/10 * * * * export HOME=/root; /bin/bash /usr/local/bin/publish-recordings.sh >> /var/log/publish-recordings.log 2>&1`
 
 
 ## publish-recordings.sh prepare and upload script
 **NOTE** PLEASE read and understand, at least basically, what this does _before_ using it.  It makes _destructive edits_
-to recordings that you might not want.  It was written to do what I needed and is provided for people to have a base to
-work from, _not_ as a working solution to your needs.
+to recordings that you might not want.
 
 ### What it does
 Given the right `RECORDING_DIR`, this iterates over all subdirectories, looking for Reaper RPP files.
@@ -50,11 +57,13 @@ Retained files then have audio compression applied, updating the RPP file with t
 Any _track_ that now has no entries is also removed.  If the project has no tracks, the recording directory is deleted.
 
 After the above processing, any remaining recording directory gets zipped (without the broken LOF)
-and uploaded to `RECORDING_HOST_DIR`.
+and uploaded to `RECORDING_HOST_DIR` or AWS `S3_BUCKET`
 
-### Configuration
+### Prerequisites
 
-There is one main dependency here: the FFMpeg suite - both `ffprobe` and `ffmpeg` itself are used.
+`apt-get install ffmpeg zip awscli   # for Debian`
+
+The FFMpeg suite - both `ffprobe` and `ffmpeg` itself are used.
 * https://ffmpeg.org/
 
 It also uses `zip`.
@@ -62,12 +71,22 @@ It also uses `zip`.
 
 Most distributions provide versions that will be adequate.
 
-The configuration section here is simpler:
-* `RECORDING_DIR=/opt/Jamulus/run/recording`
-* `RECORDING_HOST_DIR=drealm.info:html/jamulus/`
+AWS S3 upload requires `awscli` installed.
 
-The script off-sites the recordings - `RECORDING_HOST_DIR` is the target.  It uses `scp` as the user running the script.
-If run from `inotify-publisher.sh` under the systemd service, that will be the `User=` user.  Make sure you have installed
+AWS S3 upload also requires:
+- an s3 bucket (see link to guide above)
+    - See this guide to set up a browsable public bucket: [https://github.com/rufuspollock/s3-bucket-listing](https://github.com/rufuspollock/s3-bucket-listing)
+    - Set a lifecycle policy for automatic deletion of recordings after x days
+    - Provides a low-cost unattended way to manage recordings
+- AWS user credentials with access to the bucket
+    - create a user specifically for this purpose
+    - give this user permissions only for this S3 bucket
+    - create an AWS key for this user
+- AWS cli on server needs to be configure with the key created above, also the default access region.
+- test from command line with `aws s3 ls s3://<bucket-name>`
+
+The script off-sites the recordings - `RECORDING_HOST_DIR` is the target if using scp.  It uses `scp` as root when running the script.
+ that will be the `User=` user.  Make sure you have installed
 that user's public key in your hosting provider's `authorized_keys` (using the expected key type).
 
 
