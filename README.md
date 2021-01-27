@@ -40,8 +40,9 @@ I'm not sure if the status file entry `NO_CLIENT_CONNECT` gets translated - if s
 
 ## Crontab entry required
 Example: call every 10 mins; if server is idle, publish any recordings that exist  
-`*/10 * * * * export HOME=/root; /bin/bash /usr/local/bin/publish-recordings.sh >> /var/log/publish-recordings.log 2>&1`
-
+```
+*/10 * * * * export HOME=/root; /bin/bash /usr/local/bin/publish-recordings.sh >> /var/log/publish-recordings.log 2>&1
+```
 
 ## publish-recordings.sh prepare and upload script
 **NOTE** PLEASE read and understand, at least basically, what this does _before_ using it.  It makes _destructive edits_
