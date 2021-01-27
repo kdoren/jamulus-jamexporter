@@ -17,9 +17,120 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 #    See LICENCE.txt for the full text.
+#
 
-RECORDING_DIR=/opt/Jamulus/run/recording
-RECORDING_HOST_DIR=drealm.info:html/jamulus/
+
+# Modifications 2020-2021 by Kevin Doren for upload to AWS S3 bucket.
+#
+# prerequisites:
+#
+# 1) Create an S3 bucket for recordings
+#    Use this guide to make it browsable:  https://github.com/rufuspollock/s3-bucket-listing
+#
+#    create a deletion policy under "Management" -> "Lifecycle Rules"
+# 
+# 2) Create an AWS user with appropriate permissions (access to the required S3 bucket)
+#    in AWS IAM, create a user (i.e jamulus-server)
+#    "Permissions": add desired permissions to this user
+#        Quick but less secure way: attach polich "AmazonS3FullAccess
+#        Secure way: Create and attach a policy granting access only to 1 bucket.
+#    "Security Credentials": "Create access key" and save the key
+#
+# 3) install required packages:
+#    apt-get install awscli jq ffmpeg inotify-tools
+#
+# 4) configure awscli with your key and region:
+#
+#      cat <<EOF > /root/.aws/credentials
+#      [default]
+#      aws_access_key_id = <AWS_ACCESS_KEY_ID>
+#      aws_secret_access_key = <AWS_SECRET_ACCESS_KEY>
+#      EOF
+#
+#      mkdir /root/.aws
+#      cat <<EOF > /root/.aws/config
+#      [default]
+#      region=us-west-2
+#      output=json
+#      EOF
+#
+# 5) test:  aws s3 ls: s3://<s3-bucket-name>
+
+#
+# Set some default parameter values (except for S3 bucket name which has no default)
+# Params can be set either from command line, or in file /etc/publish-recording.conf
+#
+
+# Name of S3 bucket, and prefix to use when writing objects:
+#
+# There is no default value for S3_BUCKET,
+# it must be specified on command line with --bucket argument
+# or in config file /etc/publish-recordings.conf
+#
+# S3_BUCKET=<name of S3 bucket>
+PREFIX=jamulus
+
+# Recording directory used by Jamulus server:
+# Example: command line argument to Jamulus server:
+#   --recording /var/recordings/
+#
+RECORDING_DIR=/var/recordings
+
+# File used by Jamulus server to report html status, and idle message:
+# Example: command line argument to Jamulus server:
+#   --htmlstatus /tmp/jamulus-server-status.html
+#
+JAMULUS_STATUSPAGE=/tmp/jamulus-server-status.html
+NO_CLIENT_CONNECTED="No client connected"
+
+if [ -f /etc/publish-recordings.conf ]; then
+	source /etc/publish-recordings.conf
+fi
+
+#
+# This script can be invoked periodically by a crontab entry.
+# In that case, you don't need inotify-publisher.sh or inotify-publisher.service.
+#
+# If any client is connected, this script will return without doing anything
+#
+# crontab entry can be as follows:
+#
+# 0,30 * * * * export HOME=/root; /bin/bash /usr/local/bin/publish-recordings.sh >> /var/log/publish-recordings.log 2>&1
+#
+if ! grep -q "${NO_CLIENT_CONNECTED}" "${JAMULUS_STATUSPAGE}"; then
+	echo "`date`: publish_recordings.sh: exiting due to clients connected"
+	exit 0  # exit if server has clients connected
+fi
+
+while [ $# != 0 ] ; do
+  case $1 in
+    --bucket | -b )
+      S3_BUCKET="$2"
+      shift 2
+      ;;
+    --recording | -R )
+      RECORDING_DIR="$2"
+      shift 2
+      ;;
+    --prefix | -p )
+      PREFIX="$2"
+      shift 2
+      ;;
+    --htmlstatus | -m )
+      JAMULUS_STATUSPAGE="$2"
+      shift 2
+      ;;
+    * )
+      echo error: unknown argument $1
+      exit 1
+      ;;
+  esac
+done
+
+[[ -z "$S3_BUCKET" ]] && echo "Error: no --bucket specified" && exit 1
+
+
+echo "`date`: publish_recordings.sh: no clients connected, checking for recordings"
 
 cd "${RECORDING_DIR}"
 
@@ -37,7 +148,7 @@ do
 			integrated=0
 			removeWaveFromRpp=false
 
-			duration=$(ffprobe -v 0 -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$wavFile")
+			duration=$(nice -n 19 ffprobe -v 0 -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$wavFile")
 			if [[ ${duration%.*} -lt 60 ]]
 			then
 				removeWaveFromRpp=true
@@ -45,7 +156,7 @@ do
 			else
 				opusFile="${wavFile%.wav}.opus"
 				declare -a stats=($(
-					nice -n 19 ffmpeg -y -hide_banner -nostats -nostdin -i "${wavFile}" -af ebur128 -b:a 160k "${opusFile}" 2>&1 | \
+					nice -n 19 ffmpeg -y -hide_banner -nostats -nostdin -i "${wavFile}" -af ebur128 -b:a 192k "${opusFile}" 2>&1 | \
 						grep '^ *\(I:\|LRA:\)' | { read x y x; read x z x; echo $y $z; }
 				))
 [[ ${#stats[@]} -eq 2 ]]
@@ -86,27 +197,32 @@ do
 			# Note, Audacity won't like the OPUS files...
 		else
 			# As no items were left, remove the project
-			echo "Removed ${rppFile}"
+			echo `date`: Removing ${rppFile}
 			rm "${rppFile}"
-			echo "Removed ${rppFile/rpp/lof}"
+			echo `date`: Removing ${rppFile/rpp/lof}
 			rm "${rppFile/rpp/lof}"
 		fi
 
 	)
-
 	if [[ "$(cd "${jamDir}"; echo *)" == "*" ]]
 	then
+		echo `date`: Removing dir ${jamDir}
 		rmdir "${jamDir}"
 	else
-		zip -r "${jamDir}.zip" "${jamDir}" -i '*.opus' '*.rpp' && {
+		ARCHIVE="${jamDir}.zip"
+		echo `date`: Zipping dir ${jamDir} to $ARCHIVE
+		nice -n 19 zip -rj "$ARCHIVE" "${jamDir}" -i '*.opus' '*.rpp' && {
 			rm -r "${jamDir}"
+		        echo `date`: Copying ${jamDir}.zip to s3
 			i=10
-			while [[ $i -gt 0 ]] && ! scp -o ConnectionAttempts=6 "${jamDir}.zip" ${RECORDING_HOST_DIR}
+			while [[ $i -gt 0 ]] && ! nice -n 19 aws s3 cp "$ARCHIVE" s3://$S3_BUCKET/$PREFIX/ --acl public-read
 			do
 				(( i-- ))
 				sleep $(( 11 - i ))
 			done
 			[[ $i -gt 0 ]]
+			echo `date`: Removing $ARCHIVE
+			rm "$ARCHIVE"
 		}
 	fi
 
