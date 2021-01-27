@@ -37,7 +37,7 @@
 #    "Security Credentials": "Create access key" and save the key
 #
 # 3) install required packages:
-#    apt-get install awscli jq ffmpeg inotify-tools
+#    apt-get install awscli jq ffmpeg inotify-tools zip
 #
 # 4) configure awscli with your key and region:
 #
@@ -215,15 +215,22 @@ do
 			rm -r "${jamDir}"
 		        echo `date`: Copying ${jamDir}.zip to s3
 			i=10
-			while [[ $i -gt 0 ]] && ! nice -n 19 aws s3 cp "$ARCHIVE" s3://$S3_BUCKET/$PREFIX/ --acl public-read
-			do
-				(( i-- ))
-				sleep $(( 11 - i ))
-			done
+			if [ -n "S3_BUCKET" ]; then
+				while [[ $i -gt 0 ]] && ! nice -n 19 aws s3 cp "$ARCHIVE" s3://$S3_BUCKET/$PREFIX/ --acl public-read
+				do
+					(( i-- ))
+					sleep $(( 11 - i ))
+				done
+			elif [ -n "$RECORDING_HOST_DIR" ]; then
+				while [[ $i -gt 0 ]] && ! scp -o ConnectionAttempts=6 "${jamDir}.zip" ${RECORDING_HOST_DIR}
+				do
+					(( i-- ))
+					sleep $(( 11 - i ))
+				done
+			fi
 			[[ $i -gt 0 ]]
 			echo `date`: Removing $ARCHIVE
 			rm "$ARCHIVE"
 		}
 	fi
-
 done
